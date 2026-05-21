@@ -76,6 +76,7 @@ class LandStore:
             connection.execute("CREATE INDEX IF NOT EXISTS idx_land_items_status ON land_items(status)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_land_items_station ON land_items(station_match)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_land_items_deadline ON land_items(application_deadline)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_land_items_interesting ON land_items(is_interesting)")
 
     def insert_item(self, item: dict[str, Any]) -> int | None:
         self.initialize()
@@ -110,6 +111,8 @@ class LandStore:
         if filters.get("min_area_m2"):
             where.append("area_m2 >= :min_area_m2")
             params["min_area_m2"] = float(filters["min_area_m2"])
+        if filters.get("only_interesting"):
+            where.append("is_interesting = 1")
         if filters.get("only_notified"):
             where.append("is_notified = 1")
         if filters.get("only_new"):
@@ -118,7 +121,7 @@ class LandStore:
         sql = "SELECT * FROM land_items"
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY COALESCE(publication_date, created_at) DESC, id DESC"
+        sql += " ORDER BY is_interesting DESC, COALESCE(application_deadline, publication_date, created_at) DESC, id DESC"
         with self.connect() as connection:
             return [dict(row) for row in connection.execute(sql, params).fetchall()]
 
