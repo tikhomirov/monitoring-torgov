@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import pandas as pd
 import requests
@@ -76,10 +76,11 @@ class GisTorgiSource:
 class VbglenoblSource:
     name = "vbglenobl"
 
-    def __init__(self, list_url: str, http: HttpSettings, pause_seconds: float = 1.0):
+    def __init__(self, list_url: str, http: HttpSettings, pause_seconds: float = 1.0, max_details: int = 80):
         self.list_url = list_url
         self.http = http
         self.pause_seconds = pause_seconds
+        self.max_details = max_details
 
     def fetch_items(self) -> list[dict[str, Any]]:
         if not self.list_url:
@@ -89,30 +90,58 @@ class VbglenoblSource:
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
         links = self.extract_links(soup)
+        LOGGER.info("Vbglenobl candidate links: %s", len(links))
+
         items: list[dict[str, Any]] = []
+        checked = 0
         for url, title in links:
-            if not self.maybe_land_notice(title):
+            if not self.maybe_notice_link(url, title):
                 continue
+            if checked >= self.max_details:
+                LOGGER.info("Vbglenobl max detail limit reached: %s", self.max_details)
+                break
+            checked += 1
             try:
-                items.append(self.fetch_detail(url, title))
+                item = self.fetch_detail(url, title)
+                full_text = "\n".join([item.get("title") or "", item.get("description") or "", item.get("raw_text") or ""])
+                if self.maybe_land_notice(full_text):
+                    items.append(item)
                 time.sleep(self.pause_seconds)
             except requests.RequestException as error:
                 LOGGER.error("Vbglenobl detail fetch failed for %s: %s", url, error)
+
+        LOGGER.info("Vbglenobl checked details: %s, land notices: %s", checked, len(items))
         return items
 
     def extract_links(self, soup: BeautifulSoup) -> list[tuple[str, str]]:
         links: list[tuple[str, str]] = []
+        seen: set[str] = set()
         for anchor in soup.find_all("a"):
             title = anchor.get_text(" ", strip=True)
             href = anchor.get("href")
-            if not title or not href:
+            if not href:
                 continue
-            links.append((urljoin(self.list_url, str(href)), title))
+            url = urljoin(self.list_url, str(href))
+            if url in seen:
+                continue
+            seen.add(url)
+            links.append((url, title or url))
         return links
+
+    def maybe_notice_link(self, url: str, title: str) -> bool:
+        normalized_title = title.lower()
+        parsed_path = urlparse(url).path.lower()
+        if self.maybe_land_notice(normalized_title):
+            return True
+        if "/doska-obyavleniy/" in parsed_path and "izveschen" in parsed_path:
+            return True
+        if "извещение" in normalized_title or "объявление" in normalized_title:
+            return True
+        return False
 
     def maybe_land_notice(self, text: str) -> bool:
         normalized = text.lower()
-        keywords = ["земель", "39.18", "аренд", "ижс", "лпх", "садовод"]
+        keywords = ["земель", "39.18", "аренд", "ижс", "лпх", "садовод", "аукцион"]
         return any(keyword in normalized for keyword in keywords)
 
     def fetch_detail(self, url: str, title: str) -> dict[str, Any]:
@@ -147,5 +176,11 @@ def build_sources(config: dict[str, Any], selected_source: str | None = None) ->
         sources.append(GisTorgiSource(str(gis.get("excel_url") or ""), http))
     vbg = sources_config.get("vbglenobl", {})
     if vbg.get("enabled", True) and selected_source in (None, "vbglenobl"):
-        sources.append(VbglenoblSource(str(vbg.get("list_url") or ""), http))
+        sources.append(
+            VbglenoblSource(
+                str(vbg.get("list_url") or ""),
+                http,
+                max_details=int(vbg.get("max_details", 80)),
+            )
+        )
     return sources
