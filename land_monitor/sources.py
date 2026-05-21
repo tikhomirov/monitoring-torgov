@@ -53,8 +53,10 @@ class GisTorgiSource:
         publication_date = first_present(row, ["Дата публикации", "Опубликовано", "publication_date"])
         deadline = first_present(row, ["Дата окончания приема заявок", "Окончание приема заявок", "application_deadline"])
         auction_date = first_present(row, ["Дата торгов", "auction_date"])
-        status = first_present(row, ["Статус", "status"])
+        source_status = first_present(row, ["Статус", "status"])
         raw_text = "\n".join(f"{key}: {stringify(value)}" for key, value in row.items() if stringify(value))
+        if source_status:
+            raw_text = f"Статус источника: {stringify(source_status)}\n{raw_text}"
         return normalize_item(
             {
                 "source": self.name,
@@ -63,7 +65,7 @@ class GisTorgiSource:
                 "description": description,
                 "location": location,
                 "price_text": price,
-                "status": status or "new",
+                "status": "new",
                 "publication_date": publication_date,
                 "application_deadline": deadline,
                 "auction_date": auction_date,
